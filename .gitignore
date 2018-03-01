@@ -3,3 +3,7 @@
 
 # build files
 build/
+
+# jetbrains
+.idea/
+cmake-build-debug/
