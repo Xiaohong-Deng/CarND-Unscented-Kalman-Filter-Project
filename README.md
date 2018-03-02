@@ -39,7 +39,8 @@ OUTPUT: values provided by the c++ program to the simulator
 ["rmse_vy"]
 
 ---
-
+## Thoughts on the Project
+When computing mean and covariance matrix from sigma points for radar, computing them before or after mapping the prediction to the measurement space **does make** a difference. The mapping corresponds a nonlinear transformation. The mean and covariance matrix before the mapping are different from the mean and covariance matrix after the mapping. Compute them both. You'll need them in the final update step.
 ## Other Important Dependencies
 * cmake >= 3.5
   * All OSes: [click here for installation instructions](https://cmake.org/install/)

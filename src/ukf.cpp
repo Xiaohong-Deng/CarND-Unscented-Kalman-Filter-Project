@@ -68,7 +68,8 @@ UKF::UKF() {
   weights_(0) = lambda_ / denom;
   weights_.tail(2 * n_aug_) = VectorXd::Constant(2 * n_aug_, 1 / (2 * denom));
 
-  Xsig_pred_ = MatrixXd(n_aug_, 2 * n_aug_ + 1);
+  Xsig_aug_ = MatrixXd(n_aug_, 2 * n_aug_ + 1);
+  Xsig_pred_ = MatrixXd(n_x_, 2 * n_aug_ + 1);
   P_.setIdentity();
 }
 
@@ -119,15 +120,11 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
   P_aug(6, 6) = std_yawdd_ * std_yawdd_;
 
   MatrixXd L = P_aug.llt().matrixL();
-  // use Xsig_pred_ to store sigma points before and after prediction
-  // note Xsig_pred_ is supposed to store n_x_ elements per column
-  // Xsig_aug_ is supposed to store n_aug_ elements per column
-  // to accommodate this I enlarged the size of Xsig_pred_
-  // the last two rows for Xsig_pred_ should be ignored when doing update
-  Xsig_pred_.col(0) = x_aug;
+
+  Xsig_aug_.col(0) = x_aug;
   for (int i = 0; i < n_aug_; i++) {
-    Xsig_pred_.col(i + 1) = x_aug + sqrt(lambda_ + n_aug_) * L.col(i);
-    Xsig_pred_.col(i + n_aug_ + 1) = x_aug - sqrt(lambda_ + n_aug_) * L.col(i);
+    Xsig_aug_.col(i + 1) = x_aug + sqrt(lambda_ + n_aug_) * L.col(i);
+    Xsig_aug_.col(i + n_aug_ + 1) = x_aug - sqrt(lambda_ + n_aug_) * L.col(i);
   }
 
   // step 2: predict the ground_truth state at the next step
@@ -155,13 +152,13 @@ void UKF::Prediction(double delta_t) {
   */
   // step 1: predict sigma points for time step k + 1
   for (int i = 0; i < 2 * n_aug_ + 1; i++) {
-    double p_x = Xsig_pred_(0, i);
-    double p_y = Xsig_pred_(1, i);
-    double v = Xsig_pred_(2, i);
-    double yaw = Xsig_pred_(3, i);
-    double yawd = Xsig_pred_(4, i);
-    double nu_a = Xsig_pred_(5, i);
-    double nu_yawdd = Xsig_pred_(6, i);
+    double p_x = Xsig_aug_(0, i);
+    double p_y = Xsig_aug_(1, i);
+    double v = Xsig_aug_(2, i);
+    double yaw = Xsig_aug_(3, i);
+    double yawd = Xsig_aug_(4, i);
+    double nu_a = Xsig_aug_(5, i);
+    double nu_yawdd = Xsig_aug_(6, i);
 
     double px_pred, py_pred;
 
@@ -190,7 +187,13 @@ void UKF::Prediction(double delta_t) {
     Xsig_pred_(3, i) = yaw_pred;
     Xsig_pred_(4, i) = yawd_pred;
   }
-  // step 2: compute mean and covariance matrix from predicted sigma points
+  // step 2: compute mean and covariance matrix from sigma points
+  // store them in x_ and P_
+  x_ = Xsig_pred_ * weights_;
+  MatrixXd A = Xsig_pred_.colwise() - x_;
+  for (int i = 0; i < Xsig_pred_.cols(); i++) {
+    P_ += weights_(i) * A.col(i) * A.col(i).transpose();
+  }
 }
 
 /**
@@ -221,4 +224,48 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
 
   You'll also need to calculate the radar NIS.
   */
+  // transform sigma points to radar measurement space
+  int n_z = 3;
+  auto z = meas_package.raw_measurements_;
+  MatrixXd Zsig = MatrixXd(n_z, 2 * n_aug_ + 1);
+  VectorXd z_pred = VectorXd(n_z);
+  MatrixXd S = MatrixXd(n_z, n_z);
+  S.fill(0.0);
+
+  for (int i = 0; i < Xsig_pred_.cols(); i++) {
+    VectorXd z = VectorXd(n_z);
+    VectorXd x_sig_i = Xsig_pred_.col(i);
+    double px = x_sig_i(0);
+    double py = x_sig_i(1);
+    double psi = x_sig_i(3);
+    double v = x_sig_i(2);
+    z(0) = sqrt(px * px + py * py);
+    z(1) = atan2(py, px);
+    z(2) = (px * cos(psi) * v + py * sin(psi) * v) / z(0);
+    Zsig.col(i) = z;
+  }
+  // calculate mean predicted measurement
+  z_pred = Zsig * weights_;
+  // calculate innovation covariance matrix S
+  MatrixXd R = MatrixXd(n_z, n_z);
+  R << std_radr_ * std_radr_, 0, 0,
+      0, std_radphi_ * std_radphi_, 0,
+      0, 0, std_radrd_ * std_radrd_;
+  MatrixXd A = Zsig.colwise() - z_pred;
+  for (int i = 0; i < Zsig.cols(); i++) {
+    S += weights_(i) * A.col(i) * A.col(i).transpose();
+  }
+  S += R;
+
+  // update step
+  MatrixXd Tc = MatrixXd(n_x_, n_z);
+  MatrixXd Xsig_diff = Xsig_pred_.colwise() - x_;
+  MatrixXd Zsig_diff = Zsig.colwise() - z_pred;
+  for (int i = 0; i < Zsig.cols(); i++) {
+    Tc += weights_(i) * Xsig_diff.col(i) * Zsig_diff.col(i).transpose();
+  }
+  MatrixXd K = MatrixXd(n_x_, n_z);
+  K = Tc * S.inverse();
+  x_ += K * (z - z_pred);
+  P_ -= K * S * K.transpose();
 }
