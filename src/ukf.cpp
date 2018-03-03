@@ -6,7 +6,13 @@ using namespace std;
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
 using std::vector;
-
+namespace {
+  double NormalizeAngle(double angle) {
+    if (angle < -M_PI || angle > M_PI) {
+      return fmod(angle, 2 * M_PI);
+    }
+  }
+}
 /**
  * Initializes Unscented Kalman filter
  * This is scaffolding, do not modify
@@ -103,7 +109,7 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
     is_initialized_ = true;
   }
 
-  float dt = (meas_package.timestamp_ - time_us_) / 1000000.0;
+  double dt = (meas_package.timestamp_ - time_us_) / 1000000.0;
   time_us_ = meas_package;
 
   // step 1: generate sigma points with augmented x
@@ -209,6 +215,8 @@ void UKF::UpdateLidar(MeasurementPackage meas_package) {
 
   You'll also need to calculate the lidar NIS.
   */
+  int n_z = 2;
+
 }
 
 /**
@@ -265,6 +273,9 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
     Tc += weights_(i) * Xsig_diff.col(i) * Zsig_diff.col(i).transpose();
   }
   MatrixXd K = MatrixXd(n_x_, n_z);
+
+  VectorXd z_residual = z - z_pred;
+  z_residual(1) = NormalizeAngle(z_residual(1));
   K = Tc * S.inverse();
   x_ += K * (z - z_pred);
   P_ -= K * S * K.transpose();
