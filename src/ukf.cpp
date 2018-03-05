@@ -14,6 +14,7 @@ namespace {
     if (angle < -M_PI || angle > M_PI) {
       return fmod(angle, 2 * M_PI);
     }
+    return angle;
   }
 }
 /**
@@ -65,8 +66,8 @@ UKF::UKF() {
   */
   is_initialized_ = false;
 
-  std_a_ = 0.5;
-  std_yawdd_ = 0.04;
+  std_a_ = 0.3;
+  std_yawdd_ = 1.0;
 
   n_x_ = 5;
   n_aug_ = 7;
@@ -79,7 +80,12 @@ UKF::UKF() {
 
   Xsig_aug_ = MatrixXd(n_aug_, 2 * n_aug_ + 1);
   Xsig_pred_ = MatrixXd(n_x_, 2 * n_aug_ + 1);
-  P_.setIdentity();
+  P_.fill(0.0);
+  P_(0, 0) = 1.0;
+  P_(1, 1) = 1.0;
+  P_(2, 2) = 1.0;
+  P_(3, 3) = 1.0;
+  P_(4, 4) = 1.0;
 }
 
 UKF::~UKF() {}
@@ -113,11 +119,11 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
   }
 
   double dt = (meas_package.timestamp_ - time_us_) / 1000000.0;
-  if (dt < ALMOST_ZERO) {
-    cout << "this measurement took place at the same time as the last one, skipping update..." << endl:
+  if (dt == 0.0) {
+    cout << "this measurement took place at the same time as the last one, skipping update..." << endl;
     return;
   }
-  time_us_ = meas_package;
+  time_us_ = meas_package.timestamp_;
 
   // step 1: generate sigma points with augmented x
   VectorXd x_aug = VectorXd(n_aug_);
@@ -133,6 +139,8 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
   P_aug(6, 6) = std_yawdd_ * std_yawdd_;
 
   MatrixXd L = P_aug.llt().matrixL();
+  cout << "L is: " << endl;
+  cout << L << endl;
 
   Xsig_aug_.col(0) = x_aug;
   for (int i = 0; i < n_aug_; i++) {
@@ -142,13 +150,18 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
 
   // step 2: predict the ground_truth state at the next step
   Prediction(dt);
-
   // step 3: mapping the prediction to the measurement space happens here
   if (meas_package.sensor_type_ == MeasurementPackage::RADAR) {
+    cout << "in radar update..." << endl;
     UpdateRadar(meas_package);
   } else if (meas_package.sensor_type_ == MeasurementPackage::LASER) {
+    cout << "in lidar update..." << endl;
     UpdateLidar(meas_package);
   }
+
+  // print the output
+  cout << "x_: " << x_ << endl;
+  cout << "P_: " << P_ << endl;
 }
 
 /**
@@ -175,7 +188,7 @@ void UKF::Prediction(double delta_t) {
 
     double px_pred, py_pred;
 
-    if (fabs(yawd) > ALMOST_ZERO) {
+    if (fabs(yawd) > 0.001) {
       px_pred = p_x + v / yawd * (sin(yaw + yawd * delta_t) - sin(yaw));
       py_pred = p_y + v / yawd * (cos(yaw) - cos(yaw + yawd * delta_t));
     } else {
@@ -203,10 +216,15 @@ void UKF::Prediction(double delta_t) {
   // step 2: compute mean and covariance matrix from sigma points
   // store them in x_ and P_
   x_ = Xsig_pred_ * weights_;
+  P_.fill(0.0);
   MatrixXd Xsig_diff = Xsig_pred_.colwise() - x_;
   for (int i = 0; i < Xsig_pred_.cols(); i++) {
     P_ += weights_(i) * Xsig_diff.col(i) * Xsig_diff.col(i).transpose();
   }
+  cout << "predicted state and covariance matrix: " << endl;
+  cout << x_ << endl;
+  cout << P_ << endl;
+  cout << "prediction ends..." << endl;
 }
 
 /**
@@ -231,8 +249,9 @@ void UKF::UpdateLidar(MeasurementPackage meas_package) {
 
   for (int i = 0; i < Xsig_pred_.cols(); i++) {
     VectorXd z_sig_i = VectorXd(n_z);
-    z_sig_i(0) = Xsig_pred_.col(i)(0);
-    z_sig_i(1) = Xsig_pred_.col(i)(1);
+    z_sig_i(0) = Xsig_pred_(0, i);
+    z_sig_i(1) = Xsig_pred_(1, i);
+    Zsig.col(i) = z_sig_i;
   }
 
   z_pred = Zsig * weights_;
@@ -248,16 +267,17 @@ void UKF::UpdateLidar(MeasurementPackage meas_package) {
 
   // update step
   MatrixXd Tc = MatrixXd(n_x_, n_z);
+  Tc.fill(0.0);
   MatrixXd Xsig_diff = Xsig_pred_.colwise() - x_;
   for (int i = 0; i < Zsig.cols(); i++) {
+    Xsig_diff(3, i) = NormalizeAngle(Xsig_diff(3, i));
     Tc += weights_(i) * Xsig_diff.col(i) * Zsig_diff.col(i).transpose();
   }
   MatrixXd K = MatrixXd(n_x_, n_z);
 
   VectorXd z_residual = z - z_pred;
-  z_residual(1) = NormalizeAngle(z_residual(1));
   K = Tc * S.inverse();
-  x_ += K * (z - z_pred);
+  x_ += K * z_residual;
   P_ -= K * S * K.transpose();
 }
 
@@ -278,6 +298,8 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
   int n_z = 3;
   auto z = meas_package.raw_measurements_;
   MatrixXd Zsig = MatrixXd(n_z, 2 * n_aug_ + 1);
+  // z_pred is the predicted radar reading
+  // S is its covariance matrix
   VectorXd z_pred = VectorXd(n_z);
   MatrixXd S = MatrixXd(n_z, n_z);
   S.fill(0.0);
@@ -290,15 +312,19 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
     double psi = x_sig_i(3);
     double v = x_sig_i(2);
     z_sig_i(0) = sqrt(px * px + py * py);
-    if (z_sig_i(0) < ALMOST_ZERO) {
-      cout << "rho is close to zero, skipping this update..." << endl;
-    }
-    if (px < ALMOST_ZERO) {
-      cout << "px is close to zero, skipping this update..." << endl;
+    if (px == 0.0) {
+      cout << "px is zero, skipping this update..." << endl;
+      return;
     }
     z_sig_i(1) = atan2(py, px);
-    z_sig_i(2) = (px * cos(psi) * v + py * sin(psi) * v) / z_sig_i(0);
+    if (z_sig_i(0) < ALMOST_ZERO) {
+      z_sig_i(2) = 0.0;
+    } else {
+      z_sig_i(2) = (px * cos(psi) * v + py * sin(psi) * v) / z_sig_i(0);
+    }
     Zsig.col(i) = z_sig_i;
+    cout << "z sigma point i: " << endl;
+    cout << z_sig_i << endl;
   }
   // calculate mean predicted measurement
   z_pred = Zsig * weights_;
@@ -309,21 +335,24 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
       0, 0, std_radrd_ * std_radrd_;
   MatrixXd Zsig_diff = Zsig.colwise() - z_pred;
   for (int i = 0; i < Zsig.cols(); i++) {
+    // angles in Zsig_diff are normalized
+    Zsig_diff(1, i) = NormalizeAngle(Zsig_diff(1, i));
     S += weights_(i) * Zsig_diff.col(i) * Zsig_diff.col(i).transpose();
   }
   S += R;
 
   // update step
   MatrixXd Tc = MatrixXd(n_x_, n_z);
+  Tc.fill(0.0);
   MatrixXd Xsig_diff = Xsig_pred_.colwise() - x_;
   for (int i = 0; i < Zsig.cols(); i++) {
+    Xsig_diff(3, i) = NormalizeAngle(Xsig_diff(3, i));
     Tc += weights_(i) * Xsig_diff.col(i) * Zsig_diff.col(i).transpose();
   }
-  MatrixXd K = MatrixXd(n_x_, n_z);
 
   VectorXd z_residual = z - z_pred;
   z_residual(1) = NormalizeAngle(z_residual(1));
-  K = Tc * S.inverse();
-  x_ += K * (z - z_pred);
+  MatrixXd K = Tc * S.inverse();
+  x_ += K * z_residual;
   P_ -= K * S * K.transpose();
 }
