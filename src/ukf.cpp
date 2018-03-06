@@ -294,11 +294,11 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
     double psi = x_sig_i(3);
     double v = x_sig_i(2);
     z_sig_i(0) = sqrt(px * px + py * py);
-    if (px == 0.0) {
-      cout << "px is zero, skipping this update..." << endl;
-      return;
+    if (px == 0.0 && py == 0.0) {
+      z_sig_i(1) = 0.0;
+    } else {
+      z_sig_i(1) = atan2(py, px);
     }
-    z_sig_i(1) = atan2(py, px);
     if (z_sig_i(0) < ALMOST_ZERO) {
       z_sig_i(2) = 0.0;
     } else {

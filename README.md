@@ -45,6 +45,12 @@ When computing mean and covariance matrix from sigma points for radar, computing
 Caution needs to be taken in multiple places for normalizing angles, otherwise _nan_ or _inf_ will be introduced to the simulation results, causing program to hang.
 ### RMSE accuracy
 All hyperparameters are relevant to the final RMSE estimation. Fine tuning them is necessary.
+
+Remember that Kalman Filter is based on the linearity assumption. The only nonlinearity is introduced in radar update step. But in order to use sigma point method, we have to use sigma points method in predict step. It's not that we are changing the assumption of linearity, just to accommodate the sigma points method.
+
+So for Lidar update which does not introduce nonlinearity we can use linear transformation as usual for predict step. Thus two versions of prediction function can be implemented here. But in my code I have not yet done that.
+
+Using linear model in Lidar update improves the RMSE accuracy for dataset 1. 
 ## Other Important Dependencies
 * cmake >= 3.5
   * All OSes: [click here for installation instructions](https://cmake.org/install/)
